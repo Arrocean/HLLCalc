@@ -659,13 +659,25 @@ void Sidebar(float width,float height,Action& action) {
         draw->AddText(ImVec2(pos.x+S(38),pos.y+(S(40)-labelSize.y)*0.5f),Color(selected?text:muted),label);draw->PopClipRect();ImGui::PopFont();
         ImGui::PopID();
     }
-    const float footer=std::max(S(300),height-S(48)-S(172));
-    ImGui::SetCursorPos(ImVec2(S(14),footer));ImGui::Separator();Space(8);
-    Font(14);ImGui::TextColored(config.enabled?success:muted,"%s",Tr(config.enabled?"●  准星运行中":"○  准星已暂停"));ImGui::PopFont();
-    Font(12);ImGui::PushStyleColor(ImGuiCol_Text,muted);ImGui::TextWrapped(Tr("[%s] 呼出 / 收起"),Utf8(hotkey::Label()).c_str());ImGui::PopStyleColor();ImGui::PopFont();Space(8);
-    if(Button("退出程序",ImVec2(width-S(28),S(32))))action=Action::Quit;
-    Space(5);Font(14);ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));
-    if(Button("v" HLLCALC_VERSION_STRING,ImVec2(width-S(28),S(26)),false,"sidebar-version")){hotkey::CancelCapture();page=4;distanceActive=false;}
+    // Anchor from the actual child bottom; do not reserve a guessed footer height.
+    // Measure the localized shortcut because long combinations may wrap.
+    const float footerWidth=width-S(28);
+    char shortcut[512]{};std::snprintf(shortcut,sizeof(shortcut),Tr("[%s] 呼出 / 收起"),Utf8(hotkey::Label()).c_str());
+    Font(12);const float shortcutHeight=ImGui::CalcTextSize(shortcut,nullptr,false,footerWidth).y;ImGui::PopFont();
+    const float bottom=ImGui::GetWindowHeight()-S(14);
+    const float versionY=bottom-S(26);
+    const float exitY=versionY-S(6)-S(32);
+    const float shortcutY=exitY-S(10)-shortcutHeight;
+    const float statusY=shortcutY-S(6)-S(14);
+    ImGui::SetCursorPos(ImVec2(S(14),statusY-S(10)));ImGui::Separator();
+    ImGui::SetCursorPos(ImVec2(S(14),statusY));Font(14);
+    ImGui::TextColored(config.enabled?success:muted,"%s",Tr(config.enabled?"●  准星运行中":"○  准星已暂停"));ImGui::PopFont();
+    ImGui::SetCursorPos(ImVec2(S(14),shortcutY));Font(12);ImGui::PushStyleColor(ImGuiCol_Text,muted);
+    ImGui::TextWrapped("%s",shortcut);ImGui::PopStyleColor();ImGui::PopFont();
+    ImGui::SetCursorPos(ImVec2(S(14),exitY));
+    if(Button("退出程序",ImVec2(footerWidth,S(32))))action=Action::Quit;
+    ImGui::SetCursorPos(ImVec2(S(14),versionY));Font(14);ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));
+    if(Button("v" HLLCALC_VERSION_STRING,ImVec2(footerWidth,S(26)),false,"sidebar-version")){hotkey::CancelCapture();page=4;distanceActive=false;}
     RecordPoint(30);ImGui::PopStyleColor();ImGui::PopFont();
     ImGui::EndChild();ImGui::PopStyleVar(2);
 }
