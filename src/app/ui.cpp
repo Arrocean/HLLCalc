@@ -11,6 +11,7 @@
 #include "imgui.h"
 #include "input/hotkey.h"
 #include "version.h"
+#include "app/motion.h"
 #include "i18n/i18n.h"
 #include "update/updater.h"
 #include <shellapi.h>
@@ -42,7 +43,9 @@ bool animations=true,animationSuppressed=false;
 int transitionPage=-1;
 double pageTransitionStarted=0.0;
 bool requestInstallConfirmation=false,cancelInstallConfirmation=false;
-struct MotionState {float hover=0,press=0;};
+struct MotionState {motion::Spring hover,press;int lastFrame=-1;};
+motion::Spring navigationPosition;
+bool navigationInitialized=false;
 std::unordered_map<ImGuiID,MotionState> motionStates;
 struct KeyChoice {UINT key;std::string label;};
 std::vector<KeyChoice> manualKeys;
@@ -78,12 +81,19 @@ ImU32 Tint(ImU32 c) {
     return (c&0x00ffffffu)|(alpha<<24);
 }
 MotionState& Motion(ImGuiID id,bool hovered,bool held) {
-    if(motionStates.size()>256)motionStates.clear();
+    const int frame=ImGui::GetFrameCount();
+    if(motionStates.size()>256) {
+        for(auto it=motionStates.begin();it!=motionStates.end();) {
+            if(frame-it->second.lastFrame>120)it=motionStates.erase(it);else ++it;
+        }
+    }
     auto& state=motionStates[id];
-    if(!MotionEnabled()){state.hover=hovered?1.0f:0.0f;state.press=held?1.0f:0.0f;return state;}
-    const float dt=std::clamp(ImGui::GetIO().DeltaTime,0.0f,0.1f);
-    state.hover+=((hovered?1.0f:0.0f)-state.hover)*(1.0f-std::exp(-18.0f*dt));
-    state.press+=((held?1.0f:0.0f)-state.press)*(1.0f-std::exp(-25.0f*dt));
+    if(state.lastFrame>=0&&frame-state.lastFrame>1){state.hover.Snap(0);state.press.Snap(0);}
+    state.lastFrame=frame;
+    if(!MotionEnabled()){state.hover.Snap(hovered?1.0f:0.0f);state.press.Snap(held?1.0f:0.0f);return state;}
+    const float dt=ImGui::GetIO().DeltaTime;
+    state.hover.Step(hovered?1.0f:0.0f,dt,hovered?26.0f:20.0f);
+    state.press.Step(held?1.0f:0.0f,dt,held?42.0f:28.0f);
     return state;
 }
 std::string Utf8(const std::wstring& value) {
@@ -118,7 +128,7 @@ void Space(float amount=6) {
 void Title(const char* title,const char* subtitle) {
     Font(24);ImGui::TextUnformatted(Tr(title));ImGui::PopFont();
     Font(14);ImGui::PushStyleColor(ImGuiCol_Text,muted);
-    ImGui::TextWrapped("%s",Tr(subtitle));ImGui::PopStyleColor();ImGui::PopFont();Space(8);
+    ImGui::TextWrapped("%s",Tr(subtitle));ImGui::PopStyleColor();ImGui::PopFont();Space(6);
 }
 void Heading(const char* title,const char* subtitle=nullptr) {
     Font(18);ImGui::TextUnformatted(Tr(title));ImGui::PopFont();
@@ -130,24 +140,27 @@ bool Button(const char* label,ImVec2 size,bool primary=false,const char* stableI
     const auto textSize=ImGui::CalcTextSize(translated.c_str());
     if(size.x==0)size.x=textSize.x+ImGui::GetStyle().FramePadding.x*2;
     if(size.y==0)size.y=ImGui::GetFrameHeight();
-    const auto origin=ImGui::GetCursorScreenPos();
-    const float width=size.x<0?std::max(1.0f,ImGui::GetContentRegionAvail().x+size.x):size.x;
-    const bool hover=ImGui::IsMouseHoveringRect(origin,ImVec2(origin.x+width,origin.y+size.y));
-    auto& motion=Motion(ImGui::GetID(widget.c_str()),hover,hover&&ImGui::IsMouseDown(ImGuiMouseButton_Left));
+    const ImGuiID motionId=ImGui::GetID(widget.c_str());
     const auto base=primary?ImVec4(0.25f,0.38f,0.76f,1):ImGui::GetStyle().Colors[ImGuiCol_Button];
-    const auto lit=primary?ImVec4(0.34f,0.48f,0.88f,1):ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered];
+    const auto lit=primary?ImVec4(0.29f,0.42f,0.81f,1):ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered];
     const auto pressed=primary?ImVec4(0.22f,0.32f,0.66f,1):ImGui::GetStyle().Colors[ImGuiCol_ButtonActive];
     const auto empty=std::string("###")+(stableId?stableId:label);
     ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));ImGui::PushStyleColor(ImGuiCol_ButtonHovered,ImVec4(0,0,0,0));ImGui::PushStyleColor(ImGuiCol_ButtonActive,ImVec4(0,0,0,0));
     const bool clicked=ImGui::Button(empty.c_str(),size);ImGui::PopStyleColor(3);
-    if(MotionEnabled()&&(ImGui::IsItemActivated()||clicked))motion.press=1.0f;
+    // Use actual item state: dragging over another button or a modal backdrop
+    // must not make an unrelated control look pressed.
+    const bool hovered=ImGui::IsItemHovered(),held=ImGui::IsItemActive();
+    auto& feedback=Motion(motionId,hovered,held);
     auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
-    const float inset=MotionEnabled()?S(1.2f)*motion.press:0.0f;
+    const float inset=MotionEnabled()?S(0.45f)*feedback.press.value:0.0f;
     auto* draw=ImGui::GetWindowDrawList();
-    draw->AddRectFilled(ImVec2(a.x+inset,a.y+inset),ImVec2(b.x-inset,b.y-inset),Color(Mix(Mix(base,lit,motion.hover),pressed,motion.press)),ImGui::GetStyle().FrameRounding);
+    const auto fill=Mix(Mix(base,lit,feedback.hover.value),pressed,feedback.press.value);
+    draw->AddRectFilled(ImVec2(a.x+inset,a.y+inset),ImVec2(b.x-inset,b.y-inset),Color(fill),ImGui::GetStyle().FrameRounding);
+    if(ImGui::IsItemFocused()&&ImGui::GetIO().NavVisible)
+        draw->AddRect(a,b,Color(ImVec4(accent.x,accent.y,accent.z,0.65f)),ImGui::GetStyle().FrameRounding,0,S(1));
     if(!translated.empty()) {
         draw->PushClipRect(ImVec2(a.x+S(4),a.y),ImVec2(b.x-S(4),b.y),true);
-        draw->AddText(ImVec2(a.x+(b.x-a.x-textSize.x)*0.5f,a.y+(b.y-a.y-textSize.y)*0.5f+inset*0.3f),Color(ImGui::GetStyle().Colors[ImGuiCol_Text]),translated.c_str());
+        draw->AddText(ImVec2(a.x+(b.x-a.x-textSize.x)*0.5f,a.y+(b.y-a.y-textSize.y)*0.5f),Color(ImGui::GetStyle().Colors[ImGuiCol_Text]),translated.c_str());
         draw->PopClipRect();
     }
     return clicked;
@@ -158,7 +171,7 @@ bool Check(const char* label,int& value) {
 }
 void BeginCard(const char* id,ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg,ImVec4(0.09f,0.09f,0.09f,1));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(16),S(14)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(14),S(12)));
     ImGui::BeginChild(id,size,ImGuiChildFlags_Borders|ImGuiChildFlags_AlwaysUseWindowPadding,ImGuiWindowFlags_NoNavFocus);
 }
 void EndCard() {
@@ -275,10 +288,10 @@ void Calculator(Action& action) {
     Title("火炮计算","手动输入目标距离，快速获取射击参数与邻近距离修正。");
     const auto available=ImGui::GetContentRegionAvail();
     const bool columns=available.x>=S(680);
-    const float gap=S(16),leftWidth=columns?(available.x-gap)*0.49f:available.x;
+    const float gap=S(12),leftWidth=columns?(available.x-gap)*0.49f:available.x;
     // A full calculator card always has enough room for its contents. On short
     // windows the page scrolls as a whole instead of clipping the action button.
-    const float cardHeight=columns?std::max(S(500),available.y):S(500);
+    const float cardHeight=S(500);
     BeginCard("input-card",ImVec2(leftWidth,cardHeight));
     Heading("射击参数");
     Small("阵营");
@@ -407,7 +420,7 @@ bool SignedInput(const char* label,int& value) {
 void CrosshairPage() {
     Title("自定义准星","调整即刻应用到独立叠加层；收起计算器后，准星仍持续显示。");
     const float width=ImGui::GetContentRegionAvail().x;const bool columns=width>=S(650);
-    const float gap=S(16),leftWidth=columns?(width-gap)*0.55f:width;
+    const float gap=S(12),leftWidth=columns?(width-gap)*0.55f:width;
     bool changed=false;
     BeginCard("crosshair-controls",ImVec2(leftWidth,S(525)));
     Heading("外观与形状");
@@ -641,22 +654,30 @@ void Sidebar(float width,float height,Action& action) {
         ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoNavFocus|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::SetCursorPosX(S(20));Font(14);ImGui::TextColored(muted,"%s",Tr("战术工具 / TACTICAL"));ImGui::PopFont();
     const char* names[]={"火炮计算","自定义准星","使用说明","快捷键设置","设置与更新"};
+    const float selectedY=S(54.0f+static_cast<float>(page)*42.0f);
+    if(!navigationInitialized||!MotionEnabled()){navigationPosition.Snap(selectedY);navigationInitialized=true;}
+    else navigationPosition.Step(selectedY,ImGui::GetIO().DeltaTime,24.0f);
+    const auto sidebarOrigin=ImGui::GetWindowPos();
+    auto* navigationDraw=ImGui::GetWindowDrawList();
+    navigationDraw->AddRectFilled(ImVec2(sidebarOrigin.x+S(14),sidebarOrigin.y+navigationPosition.value),
+        ImVec2(sidebarOrigin.x+width-S(14),sidebarOrigin.y+navigationPosition.value+S(38)),
+        Color(ImVec4(0.13f,0.17f,0.25f,1)),S(6));
     for(int i=0;i<5;++i) {
-        ImGui::SetCursorPos(ImVec2(S(14),S(60.0f+static_cast<float>(i)*46.0f)));ImGui::PushID(i);
+        ImGui::SetCursorPos(ImVec2(S(14),S(54.0f+static_cast<float>(i)*42.0f)));ImGui::PushID(i);
         const auto pos=ImGui::GetCursorScreenPos();const bool selected=page==i;
-        ImGui::PushStyleColor(ImGuiCol_Button,selected?ImVec4(0.14f,0.18f,0.28f,1):ImVec4(0,0,0,0));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,selected?ImVec4(0.18f,0.23f,0.34f,1):ImVec4(0.15f,0.16f,0.18f,1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,ImVec4(0.20f,0.25f,0.36f,1));
-        if(Button("##navigation",ImVec2(width-S(28),S(40)))){if(page!=i)hotkey::CancelCapture();page=i;distanceActive=false;}
+        ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,ImVec4(0.35f,0.40f,0.50f,0.12f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,ImVec4(0.25f,0.32f,0.45f,0.18f));
+        if(Button("##navigation",ImVec2(width-S(28),S(38)))){if(page!=i)hotkey::CancelCapture();page=i;distanceActive=false;}
         RecordPoint(i<3?i:(i==3?19:29));ImGui::PopStyleColor(3);
         const auto sideOrigin=ImGui::GetWindowPos();
         if(pos.x-sideOrigin.x<S(13)||pos.x+width-S(28)>sideOrigin.x+width-S(13))layoutIssues|=32;
-        auto* draw=ImGui::GetWindowDrawList();NavIcon(draw,ImVec2(pos.x+S(18),pos.y+S(20)),i,Color(selected?accent:muted));
+        auto* draw=ImGui::GetWindowDrawList();NavIcon(draw,ImVec2(pos.x+S(18),pos.y+S(19)),i,Color(selected?accent:muted));
         Font(17);const char* label=Tr(names[i]);auto labelSize=ImGui::CalcTextSize(label);
         const float labelWidth=width-S(72);
         if(labelSize.x>labelWidth){const float fit=std::max(14.0f,17.0f*labelWidth/labelSize.x);ImGui::PopFont();Font(fit);labelSize=ImGui::CalcTextSize(label);}
         draw->PushClipRect(ImVec2(pos.x+S(36),pos.y),ImVec2(pos.x+width-S(34),pos.y+S(40)),true);
-        draw->AddText(ImVec2(pos.x+S(38),pos.y+(S(40)-labelSize.y)*0.5f),Color(selected?text:muted),label);draw->PopClipRect();ImGui::PopFont();
+        draw->AddText(ImVec2(pos.x+S(38),pos.y+(S(38)-labelSize.y)*0.5f),Color(selected?text:muted),label);draw->PopClipRect();ImGui::PopFont();
         ImGui::PopID();
     }
     // Anchor from the actual child bottom; do not reserve a guessed footer height.
@@ -704,10 +725,10 @@ bool Initialize(const std::wstring& iniPath,float uiScale) {
     GetPrivateProfileStringW(L"Calculator",L"Inclination",L"0",buffer,64,configPath.c_str());Copy(inclinationText,sizeof(inclinationText),Utf8(buffer));
     SyncConfig();
     animations=GetPrivateProfileIntW(L"Appearance",L"Animations",1,configPath.c_str())!=0;
-    motionStates.clear();transitionPage=-1;
+    motionStates.clear();transitionPage=-1;navigationInitialized=false;
     // Start from an unscaled style every time; never multiply a previously scaled style.
     ImGuiStyle style;ImGui::StyleColorsDark(&style);
-    style.WindowPadding=ImVec2(16,14);style.FramePadding=ImVec2(10,6);style.ItemSpacing=ImVec2(8,5);style.ItemInnerSpacing=ImVec2(8,5);
+    style.WindowPadding=ImVec2(16,14);style.FramePadding=ImVec2(10,6);style.ItemSpacing=ImVec2(8,4);style.ItemInnerSpacing=ImVec2(8,5);
     style.CellPadding=ImVec2(12,7);style.SelectableTextAlign=ImVec2(0,0.5f);style.ButtonTextAlign=ImVec2(0.5f,0.5f);
     style.WindowRounding=12;style.ChildRounding=10;style.FrameRounding=6;style.PopupRounding=8;style.ScrollbarRounding=8;
     style.WindowBorderSize=0;style.ChildBorderSize=1;style.FrameBorderSize=0;style.PopupBorderSize=1;style.ScrollbarSize=9;style.GrabMinSize=12;
@@ -716,7 +737,7 @@ bool Initialize(const std::wstring& iniPath,float uiScale) {
     style.Colors[ImGuiCol_NavCursor]=ImVec4(0.39f,0.56f,1.0f,0.65f);
     style.Colors[ImGuiCol_Border]=ImVec4(0.16f,0.16f,0.16f,1);style.Colors[ImGuiCol_Separator]=style.Colors[ImGuiCol_Border];
     style.Colors[ImGuiCol_FrameBg]=ImVec4(0.15f,0.15f,0.15f,1);style.Colors[ImGuiCol_FrameBgHovered]=ImVec4(0.20f,0.20f,0.22f,1);style.Colors[ImGuiCol_FrameBgActive]=ImVec4(0.20f,0.23f,0.31f,1);
-    style.Colors[ImGuiCol_Button]=ImVec4(0.15f,0.15f,0.15f,1);style.Colors[ImGuiCol_ButtonHovered]=ImVec4(0.23f,0.23f,0.26f,1);style.Colors[ImGuiCol_ButtonActive]=ImVec4(0.20f,0.25f,0.38f,1);
+    style.Colors[ImGuiCol_Button]=ImVec4(0.15f,0.15f,0.15f,1);style.Colors[ImGuiCol_ButtonHovered]=ImVec4(0.19f,0.20f,0.22f,1);style.Colors[ImGuiCol_ButtonActive]=ImVec4(0.17f,0.20f,0.27f,1);
     style.Colors[ImGuiCol_Header]=ImVec4(0.19f,0.25f,0.40f,1);style.Colors[ImGuiCol_HeaderHovered]=ImVec4(0.23f,0.30f,0.47f,1);style.Colors[ImGuiCol_HeaderActive]=ImVec4(0.28f,0.36f,0.55f,1);
     style.Colors[ImGuiCol_CheckMark]=accent;style.Colors[ImGuiCol_SliderGrab]=accent;style.Colors[ImGuiCol_SliderGrabActive]=purple;style.Colors[ImGuiCol_TextSelectedBg]=ImVec4(0.31f,0.43f,0.74f,0.5f);
     style.Colors[ImGuiCol_TableHeaderBg]=ImVec4(0.12f,0.12f,0.13f,1);style.ScaleAllSizes(scale);ImGui::GetStyle()=style;
@@ -764,10 +785,10 @@ Action Frame() {
     WindowButtons(width,action);Sidebar(side,height,action);
     ImGui::SetCursorPos(ImVec2(side,S(48)));
     if(page!=transitionPage){transitionPage=page;pageTransitionStarted=ImGui::GetTime();}
-    const float progress=MotionEnabled()?std::clamp(static_cast<float>((ImGui::GetTime()-pageTransitionStarted)/0.18),0.0f,1.0f):1.0f;
-    const float eased=1.0f-(1.0f-progress)*(1.0f-progress)*(1.0f-progress);
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*(0.35f+0.65f*eased));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(20),S(20)));
+    const float progress=MotionEnabled()?std::clamp(static_cast<float>((ImGui::GetTime()-pageTransitionStarted)/0.16),0.0f,1.0f):1.0f;
+    const float eased=motion::SmootherStep(progress);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*(0.84f+0.16f*eased));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(16),S(16)));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,0);
     ImGui::BeginChild("page-content",ImVec2(std::max(S(50),width-side),std::max(S(50),height-S(48))),
         ImGuiChildFlags_AlwaysUseWindowPadding|ImGuiChildFlags_NavFlattened,

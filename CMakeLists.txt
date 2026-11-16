@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # CI sets these from the version tag; local builds use the next development version.
-set(HLLCALC_VERSION "1.3.1" CACHE STRING "Three-component application version")
+set(HLLCALC_VERSION "1.3.2" CACHE STRING "Three-component application version")
 set(HLLCALC_VERSION_SUFFIX "" CACHE STRING "Optional prerelease suffix, e.g. rc.1")
 if(NOT HLLCALC_VERSION MATCHES "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
     message(FATAL_ERROR "HLLCALC_VERSION must be MAJOR.MINOR.PATCH without leading zeros")

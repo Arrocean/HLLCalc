@@ -9,6 +9,25 @@ inline float EaseOutCubic(float t) {
 inline float EaseInOutCubic(float t) {
     t=std::clamp(t,0.0f,1.0f);return t<0.5f?4.0f*t*t*t:1.0f-std::pow(-2.0f*t+2.0f,3.0f)*0.5f;
 }
+// Exact critically damped response: smooth velocity, no bounce and independent
+// of frame rate. Retargeting preserves velocity instead of restarting an ease.
+struct Spring {
+    float value=0,velocity=0;
+    void Snap(float target){value=target;velocity=0;}
+    float Step(float target,float dt,float response=22.0f) {
+        dt=std::clamp(dt,0.0f,0.1f);
+        const float offset=value-target;
+        const float impulse=velocity+response*offset;
+        const float decay=std::exp(-response*dt);
+        value=target+(offset+impulse*dt)*decay;
+        velocity=(velocity-response*impulse*dt)*decay;
+        if(std::abs(value-target)<0.0001f&&std::abs(velocity)<0.001f)Snap(target);
+        return value;
+    }
+};
+inline float SmootherStep(float t) {
+    t=std::clamp(t,0.0f,1.0f);return t*t*t*(t*(t*6.0f-15.0f)+10.0f);
+}
 // Time-based tween can be reversed at its current value, with no positional jump.
 struct Tween {
     float from=1,to=1,value=1;

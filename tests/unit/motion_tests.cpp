@@ -16,5 +16,15 @@ int main(){
     Check(tween.Tick(10.18)<halfway,"closing after reversal");
     Check(tween.Tick(10.3)==0&&!tween.active,"finished closing");
     tween.Start(1,11,0);Check(tween.Tick(11)==1&&!tween.active,"zero duration snaps safely");
+    Spring spring;spring.Snap(0);float last=0;
+    for(int i=0;i<240;++i){float value=spring.Step(1,1.0f/120.0f);Check(value>=last-0.0001f&&value<=1.0001f,"critically damped motion does not bounce");last=value;}
+    Check(std::abs(spring.value-1)<0.0001f,"spring settles");
+    Spring a,b;a.Snap(0);b.Snap(0);
+    for(int i=0;i<60;++i)a.Step(1,1.0f/60.0f);
+    for(int i=0;i<144;++i)b.Step(1,1.0f/144.0f);
+    Check(std::abs(a.value-b.value)<0.0001f,"spring response is refresh-rate independent");
+    a.Snap(0);a.Step(1,0.03f);const float velocity=a.velocity;a.Step(0,0);
+    Check(a.velocity==velocity,"retarget preserves velocity");
+    Check(SmootherStep(0)==0&&SmootherStep(1)==1&&std::abs(SmootherStep(0.5f)-0.5f)<0.0001f,"smooth page easing endpoints");
     std::cout<<"All nonlinear motion tests passed.\n";
 }

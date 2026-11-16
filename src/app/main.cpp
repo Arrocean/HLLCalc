@@ -100,7 +100,7 @@ void HideCalculator() {
     hotkey::CancelCapture();if(ready)ui::Save();
     if(!IsWindowVisible(window))return;
     if(ready&&(!testProfile||animationTest)&&ui::AnimationsEnabled()) {
-        hidePending=true;windowMotion.Start(0,MotionTime(),0.16);SetTimer(window,AnimationTimer,10,nullptr);
+        hidePending=true;windowMotion.Start(0,MotionTime(),0.12);SetTimer(window,AnimationTimer,10,nullptr);
     } else CompleteHide();
 }
 void ShowCalculator() {
@@ -108,7 +108,7 @@ void ShowCalculator() {
     if(!wasVisible)CaptureReturnTarget();hidePending=false;
     const bool animate=ready&&(!testProfile||animationTest)&&ui::AnimationsEnabled();
     if(!wasVisible)windowMotion.Snap(animate?0.0f:1.0f);
-    if(animate){windowMotion.Start(1,MotionTime(),0.20);SetTimer(window,AnimationTimer,10,nullptr);}
+    if(animate){windowMotion.Start(1,MotionTime(),0.18);SetTimer(window,AnimationTimer,10,nullptr);}
     else {windowMotion.Snap(1);KillTimer(window,AnimationTimer);}
     SetLayeredWindowAttributes(window,0,static_cast<BYTE>(windowMotion.value*255.0f+0.5f),LWA_ALPHA);
     ShowWindow(window,SW_RESTORE);
@@ -273,7 +273,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR arguments,int) {
         hotkey::Initialize(window,iniPath);
             ready=true;Tray(true);SetTimer(window,1,1000,nullptr);ShowCalculator();
             if(testing)SetTimer(window,2,700,nullptr);
-            bool done=false;ULONGLONG nextFrame=0;
+            bool done=false;
             while(!done){
                 MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
                     if(message.message==WM_QUIT){exitCode=static_cast<int>(message.wParam);done=true;break;}
@@ -281,9 +281,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR arguments,int) {
                 }
                 if(done)break;
                 if(!IsWindowVisible(window)||IsIconic(window)){WaitMessage();continue;}
-                const auto now=GetTickCount64();
-                if(now<nextFrame){MsgWaitForMultipleObjects(0,nullptr,FALSE,static_cast<DWORD>(nextFrame-now),QS_ALLINPUT);continue;}
-                nextFrame=now+16;
+                // Present(1) already paces frames to the display. A second 16ms
+                // software cap fights vsync and causes uneven motion on 120/144Hz.
+                if(windowMotion.active)TickWindowMotion();
                 if(resizeWidth&&resizeHeight){
                     ReleaseTarget();HRESULT result=swapChain->ResizeBuffers(0,resizeWidth,resizeHeight,DXGI_FORMAT_UNKNOWN,0);resizeWidth=resizeHeight=0;
                     if(FAILED(result)||!CreateTarget()){exitCode=1;break;}
@@ -293,6 +293,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR arguments,int) {
                 const float clear[]{0.039f,0.039f,0.039f,1.0f};context->OMSetRenderTargets(1,&renderTarget,nullptr);context->ClearRenderTargetView(renderTarget,clear);
                 ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());HRESULT present=swapChain->Present(1,0);
                 if(FAILED(present)){exitCode=1;break;}
+                if(present==DXGI_STATUS_OCCLUDED)MsgWaitForMultipleObjects(0,nullptr,FALSE,50,QS_ALLINPUT);
                 if(frames==1)updater::AcknowledgeReady();
                 if(action==ui::Action::Hide)HideCalculator();
                 else if(action==ui::Action::Quit)DestroyWindow(window);
