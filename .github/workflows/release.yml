@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# Building untrusted repository content never receives write permission.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and package Windows x64
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate tag and derive version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          $pattern = '^v(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)(?:-(?<suffix>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+          if ($tag.Length -gt 160 -or -not ($tag -cmatch $pattern)) {
+            throw 'Tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease.'
+          }
+          $parts = @($Matches.major, $Matches.minor, $Matches.patch)
+          foreach ($part in $parts) {
+            $number = 0
+            if (-not [int]::TryParse($part, [ref]$number) -or $number -gt 65535) {
+              throw 'Version components must be integers from 0 through 65535.'
+            }
+          }
+          $core = $parts -join '.'
+          $suffix = [string]$Matches.suffix
+          if ($suffix) {
+            foreach ($identifier in $suffix.Split('.')) {
+              if ($identifier -cmatch '^0[0-9]+$') {
+                throw 'Numeric prerelease identifiers must not contain leading zeroes.'
+              }
+            }
+          }
+          $full = $core + $(if ($suffix) { '-' + $suffix } else { '' })
+          "version=$full" >> $env:GITHUB_OUTPUT
+          "core=$core" >> $env:GITHUB_OUTPUT
+          "suffix=$suffix" >> $env:GITHUB_OUTPUT
+          "prerelease=$(if ($suffix) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+
+      - name: Configure tag version
+        env:
+          APP_VERSION: ${{ steps.version.outputs.core }}
+          APP_VERSION_SUFFIX: ${{ steps.version.outputs.suffix }}
+        run: >-
+          cmake -S . -B build -A x64
+          "-DHLLCALC_VERSION=$env:APP_VERSION"
+          "-DHLLCALC_VERSION_SUFFIX=$env:APP_VERSION_SUFFIX"
+          -DBUILD_TESTING=ON
+          -DHLLCALC_BUILD_UI_TESTS=OFF
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Run non-interactive tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package binary, corresponding source and checksums
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: >-
+          ./scripts/package.ps1 -BuildDirectory build -Configuration Release
+          -Version $env:APP_VERSION -OutputDirectory dist
+
+      - name: Upload release assets to publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            dist/HLLCalc-*-windows-x64.zip
+            dist/HLLCalc-*-source.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # No checkout or repository scripts execute in this write-permission job.
+      - name: Download checked build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Create or update release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          APP_VERSION: ${{ needs.build.outputs.version }}
+          IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          expected="v${APP_VERSION}"
+          [[ "$RELEASE_TAG" == "$expected" ]] || { echo 'Tag/output version mismatch'; exit 1; }
+          binary="dist/HLLCalc-${APP_VERSION}-windows-x64.zip"
+          source="dist/HLLCalc-${APP_VERSION}-source.zip"
+          test -s "$binary" && test -s "$source" && test -s dist/SHA256SUMS.txt
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$binary" "$source" dist/SHA256SUMS.txt --repo "$GH_REPO" --clobber
+          else
+            flags=(--verify-tag --generate-notes --title "HLLCalc ${APP_VERSION}")
+            if [[ "$IS_PRERELEASE" == 'true' ]]; then flags+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" "$binary" "$source" dist/SHA256SUMS.txt --repo "$GH_REPO" "${flags[@]}"
+          fi

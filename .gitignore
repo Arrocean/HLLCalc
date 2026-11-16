@@ -1,0 +1,90 @@
+# Build and release output (root directories only)
+/build/
+/out/
+/release/
+/dist/
+/artifacts/
+/cmake-build-*/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+CMakeUserPresets.json
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+install_manifest.txt
+compile_commands.json
+
+# Ninja / MSBuild generated files
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.tlog/
+*.lastbuildstate
+
+# C/C++ compiler and linker output
+*.obj
+*.o
+*.res
+*.pch
+*.gch
+*.idb
+*.ipdb
+*.iobj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.a
+*.exe
+*.dll
+*.map
+*.manifest.intermediate
+*.exe.manifest
+*.dll.manifest
+
+# Visual Studio / editor local state
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+/.vscode/
+/.idea/
+
+# Python development helpers
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local runtime state and diagnostics
+/settings.ini
+/smoke-test.ini
+/imgui.ini
+/parity.csv
+*.log
+*.dmp
+*.stackdump
+*.tmp
+*.temp
+*.bak
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Keep src/, tests/, resources/, cmake/, scripts/, docs/ and .github/ tracked.
+# Third-party sources, original license notices and image/icon assets are source.

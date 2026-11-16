@@ -1,0 +1,67 @@
+name: Build and test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64 / ${{ matrix.configuration }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build -A x64
+          -DBUILD_TESTING=ON
+          -DHLLCALC_BUILD_UI_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.configuration }} --parallel
+
+      # Standard tests do not show UI, synthesize input or install updates. The hidden
+      # window hotkey test runs serially; interactive desktop tests stay disabled.
+      - name: Run non-interactive tests
+        run: ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure
+
+      - name: Stage executable, documentation and complete license notices
+        run: cmake --install build --config ${{ matrix.configuration }} --prefix artifacts/package
+
+      - name: Upload executable and license notices
+        uses: actions/upload-artifact@v4
+        with:
+          name: HLLCalc-windows-x64-${{ matrix.configuration }}
+          path: artifacts/package/**
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Upload test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.configuration }}
+          path: build/Testing/Temporary/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+          include-hidden-files: false

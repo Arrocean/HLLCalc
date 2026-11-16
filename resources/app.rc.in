@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include <windows.h>
+#include "resource.h"
+
+IDI_HLLCALC ICON "@HLLCALC_ICON_FILE@"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "HLLCalc\0"
+            VALUE "FileDescription", "HLLCalc - Artillery Calculator and Crosshair\0"
+            VALUE "FileVersion", "@HLLCALC_FULL_VERSION@\0"
+            VALUE "InternalName", "HLLCalc\0"
+            VALUE "OriginalFilename", "HLLCalc.exe\0"
+            VALUE "ProductName", "HLLCalc\0"
+            VALUE "ProductVersion", "@HLLCALC_FULL_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
