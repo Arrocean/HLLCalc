@@ -200,16 +200,34 @@ LRESULT CALLBACK WindowProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     }
     return DefWindowProcW(h,msg,wp,lp);
 }
+// Latin text and digits use Segoe UI (crisp UI hinting, tabular figures that align
+// in the reference table); CJK glyphs are merged from Microsoft YaHei UI, whose
+// metrics are designed to match Segoe UI. Falls back to the previous single
+// CJK font when Segoe UI is unavailable.
 bool LoadFont() {
     wchar_t windows[MAX_PATH]{};GetWindowsDirectoryW(windows,MAX_PATH);
-    for(const auto* name:{L"msyh.ttc",L"msyh.ttf",L"simhei.ttf",L"msjh.ttc"}) {
+    auto fontPath=[&](const wchar_t* name,std::string& out)->bool {
         const auto path=std::wstring(windows)+L"\\Fonts\\"+name;
-        if(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES)continue;
+        if(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES)return false;
         char utf8[MAX_PATH*4]{};WideCharToMultiByte(CP_UTF8,0,path.c_str(),-1,utf8,sizeof(utf8),nullptr,nullptr);
-        ImFontConfig config{};config.OversampleH=2;config.OversampleV=1;
-        if(auto font=ImGui::GetIO().Fonts->AddFontFromFileTTF(utf8,18.0f*scale,&config)){ImGui::GetIO().FontDefault=font;return true;}
+        out=utf8;return true;
+    };
+    auto& fonts=*ImGui::GetIO().Fonts;const float size=18.0f*scale;
+    ImFont* base=nullptr;std::string path;
+    if(fontPath(L"segoeui.ttf",path)) {
+        ImFontConfig config{};config.OversampleH=2;config.OversampleV=1;config.PixelSnapH=true;
+        base=fonts.AddFontFromFileTTF(path.c_str(),size,&config);
     }
-    return false;
+    struct Cjk{const wchar_t* file;int face;};
+    // msyh.ttc face 1 is "Microsoft YaHei UI"; face 0 is the document variant.
+    for(const Cjk cjk:{Cjk{L"msyh.ttc",1},Cjk{L"msyh.ttf",0},Cjk{L"simhei.ttf",0},Cjk{L"msjh.ttc",1}}) {
+        if(!fontPath(cjk.file,path))continue;
+        ImFontConfig config{};config.OversampleH=2;config.OversampleV=1;config.PixelSnapH=true;
+        config.FontNo=cjk.face;config.MergeMode=base!=nullptr;
+        if(auto font=fonts.AddFontFromFileTTF(path.c_str(),size,&config)){if(!base)base=font;break;}
+    }
+    if(base)ImGui::GetIO().FontDefault=base;
+    return base!=nullptr;
 }
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR arguments,int) {

@@ -53,6 +53,8 @@ int manualKeyIndex=0;
 bool manualCtrl=false,manualAlt=false,manualShift=false,manualWin=false;
 UINT manualLoadedKey=0,manualLoadedMods=0;
 int layoutIssues=0;
+double csDialogOpened=0.0,installDialogOpened=0.0,resultChanged=-10.0;
+std::string lastResult;
 void RecordPoint(int id) {
     auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
     testPoints[id]={static_cast<int>((a.x+b.x)*0.5f),static_cast<int>((a.y+b.y)*0.5f),ImGui::IsItemVisible()};
@@ -79,6 +81,11 @@ ImU32 Color(ImVec4 c) {c.w*=ImGui::GetStyle().Alpha;return ImGui::ColorConvertFl
 ImU32 Tint(ImU32 c) {
     const auto alpha=static_cast<unsigned>(static_cast<float>((c>>24)&255u)*ImGui::GetStyle().Alpha);
     return (c&0x00ffffffu)|(alpha<<24);
+}
+// Fade-in factor for transient surfaces (modals); 1 when motion is disabled.
+float AppearFactor(double started,double seconds) {
+    if(!MotionEnabled())return 1.0f;
+    return motion::EaseOutCubic(static_cast<float>((ImGui::GetTime()-started)/seconds));
 }
 MotionState& Motion(ImGuiID id,bool hovered,bool held) {
     const int frame=ImGui::GetFrameCount();
@@ -128,7 +135,7 @@ void Space(float amount=6) {
 void Title(const char* title,const char* subtitle) {
     Font(24);ImGui::TextUnformatted(Tr(title));ImGui::PopFont();
     Font(14);ImGui::PushStyleColor(ImGuiCol_Text,muted);
-    ImGui::TextWrapped("%s",Tr(subtitle));ImGui::PopStyleColor();ImGui::PopFont();Space(6);
+    ImGui::TextWrapped("%s",Tr(subtitle));ImGui::PopStyleColor();ImGui::PopFont();Space(10);
 }
 void Heading(const char* title,const char* subtitle=nullptr) {
     Font(18);ImGui::TextUnformatted(Tr(title));ImGui::PopFont();
@@ -152,10 +159,17 @@ bool Button(const char* label,ImVec2 size,bool primary=false,const char* stableI
     const bool hovered=ImGui::IsItemHovered(),held=ImGui::IsItemActive();
     auto& feedback=Motion(motionId,hovered,held);
     auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
-    const float inset=MotionEnabled()?S(0.45f)*feedback.press.value:0.0f;
+    const float inset=MotionEnabled()?S(1.0f)*feedback.press.value:0.0f;
     auto* draw=ImGui::GetWindowDrawList();
     const auto fill=Mix(Mix(base,lit,feedback.hover.value),pressed,feedback.press.value);
-    draw->AddRectFilled(ImVec2(a.x+inset,a.y+inset),ImVec2(b.x-inset,b.y-inset),Color(fill),ImGui::GetStyle().FrameRounding);
+    const float rounding=ImGui::GetStyle().FrameRounding;
+    const ImVec2 fa(a.x+inset,a.y+inset),fb(b.x-inset,b.y-inset);
+    draw->AddRectFilled(fa,fb,Color(fill),rounding);
+    // Soft hover rim; primary buttons get an accent tint, others a neutral one.
+    if(fill.w>0.01f&&feedback.hover.value>0.01f) {
+        const ImVec4 rim=primary?ImVec4(0.55f,0.68f,1.0f,0.35f):ImVec4(1,1,1,0.07f);
+        draw->AddRect(fa,fb,Color(ImVec4(rim.x,rim.y,rim.z,rim.w*feedback.hover.value)),rounding,0,S(1));
+    }
     if(ImGui::IsItemFocused()&&ImGui::GetIO().NavVisible)
         draw->AddRect(a,b,Color(ImVec4(accent.x,accent.y,accent.z,0.65f)),ImGui::GetStyle().FrameRounding,0,S(1));
     if(!translated.empty()) {
@@ -226,16 +240,19 @@ void CsCodeDialog() {
     if(cancelCsDialog)requestCsDialog=false;
     if(requestCsDialog&&!cancelCsDialog) {
         csCodeError.clear();ImGui::OpenPopup(StableLabel("导入 CS 准星代码","cs-code-modal").c_str());requestCsDialog=false;
+        csDialogOpened=ImGui::GetTime();
     }
     csDialogVisible=false;
     const auto display=ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImVec2(display.x*0.5f,display.y*0.5f),ImGuiCond_Appearing,ImVec2(0.5f,0.5f));
+    const float appear=AppearFactor(csDialogOpened,0.16);
+    ImGui::SetNextWindowPos(ImVec2(display.x*0.5f,display.y*0.5f+S(10)*(1.0f-appear)),ImGuiCond_Always,ImVec2(0.5f,0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(S(540),display.x-S(36)),0),ImGuiCond_Appearing);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*appear);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(22),S(20)));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,S(10));
     ImGui::PushStyleColor(ImGuiCol_WindowBg,ImVec4(0.09f,0.09f,0.09f,1));
     bool open=true;
-    if(ImGui::BeginPopupModal(StableLabel("导入 CS 准星代码","cs-code-modal").c_str(),&open,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize)) {
+    if(ImGui::BeginPopupModal(StableLabel("导入 CS 准星代码","cs-code-modal").c_str(),&open,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove)) {
         if(cancelCsDialog)ImGui::CloseCurrentPopup();
         else {
             csDialogVisible=true;
@@ -273,7 +290,7 @@ void CsCodeDialog() {
         }
         ImGui::EndPopup();
     }
-    ImGui::PopStyleColor();ImGui::PopStyleVar(2);cancelCsDialog=false;
+    ImGui::PopStyleColor();ImGui::PopStyleVar(3);cancelCsDialog=false;
 }
 void Negate(char* buffer,size_t capacity) {int value=0;if(Parse(buffer,value,-9999,9999,true)) std::snprintf(buffer,capacity,"%d",-value);}
 const char* LimitText(ballistics::Status status) {
@@ -332,7 +349,11 @@ void Calculator(Action& action) {
     const auto result=ballistics::Calculate(static_cast<ballistics::Nation>(nation),mode==0?ballistics::Mode::SPG:ballistics::Mode::Standard,valid?distance:0,inclination);
     Small("建议射击参数");
     const auto value=valid?std::to_string(result.mil):std::string("—");
-    ResultLine(value.c_str(),result.status==ballistics::Status::Valid?accent:caution);
+    if(value!=lastResult){if(!lastResult.empty())resultChanged=ImGui::GetTime();lastResult=value;}
+    // Brief brighten on change so a new firing solution is noticed at a glance.
+    const ImVec4 resultColor=result.status==ballistics::Status::Valid?accent:caution;
+    const float flash=MotionEnabled()?1.0f-motion::EaseOutCubic(static_cast<float>((ImGui::GetTime()-resultChanged)/0.35)):0.0f;
+    ResultLine(value.c_str(),Mix(resultColor,text,0.55f*flash));
     Font(14);ImGui::PushStyleColor(ImGuiCol_Text,result.status==ballistics::Status::Valid?success:caution);
     ImGui::TextWrapped("%s",Tr(LimitText(result.status)));ImGui::PopStyleColor();ImGui::PopFont();
     Space(8);
@@ -539,14 +560,17 @@ const char* UpdatePhaseText(updater::Phase phase) {
 void UpdateConfirmation(Action& action) {
     if(cancelInstallConfirmation)requestInstallConfirmation=false;
     const auto title=StableLabel("确认安装更新","install-update-modal");
-    if(requestInstallConfirmation&&!cancelInstallConfirmation){ImGui::OpenPopup(title.c_str());requestInstallConfirmation=false;}
+    if(requestInstallConfirmation&&!cancelInstallConfirmation){ImGui::OpenPopup(title.c_str());requestInstallConfirmation=false;installDialogOpened=ImGui::GetTime();}
     const auto display=ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImVec2(display.x*0.5f,display.y*0.5f),ImGuiCond_Appearing,ImVec2(0.5f,0.5f));
+    const float appear=AppearFactor(installDialogOpened,0.16);
+    ImGui::SetNextWindowPos(ImVec2(display.x*0.5f,display.y*0.5f+S(10)*(1.0f-appear)),ImGuiCond_Always,ImVec2(0.5f,0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(S(500),display.x-S(32)),0),ImGuiCond_Appearing);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(20),S(18)));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,ImVec4(0.09f,0.10f,0.12f,1));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*appear);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(22),S(20)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,S(10));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,ImVec4(0.09f,0.09f,0.09f,1));
     bool open=true;
-    if(ImGui::BeginPopupModal(title.c_str(),&open,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize)) {
+    if(ImGui::BeginPopupModal(title.c_str(),&open,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove)) {
         const auto snapshot=updater::GetSnapshot();
         if(cancelInstallConfirmation||snapshot.phase!=updater::Phase::Ready)ImGui::CloseCurrentPopup();
         else {
@@ -559,7 +583,7 @@ void UpdateConfirmation(Action& action) {
         }
         ImGui::EndPopup();
     }
-    ImGui::PopStyleColor();ImGui::PopStyleVar();cancelInstallConfirmation=false;
+    ImGui::PopStyleColor();ImGui::PopStyleVar(3);cancelInstallConfirmation=false;
 }
 void SettingsPage() {
     Title("设置与更新","自动保存的界面选项。");
@@ -662,6 +686,9 @@ void Sidebar(float width,float height,Action& action) {
     navigationDraw->AddRectFilled(ImVec2(sidebarOrigin.x+S(14),sidebarOrigin.y+navigationPosition.value),
         ImVec2(sidebarOrigin.x+width-S(14),sidebarOrigin.y+navigationPosition.value+S(38)),
         Color(ImVec4(0.13f,0.17f,0.25f,1)),S(6));
+    // Accent indicator rides with the highlight pill.
+    navigationDraw->AddRectFilled(ImVec2(sidebarOrigin.x+S(14),sidebarOrigin.y+navigationPosition.value+S(10)),
+        ImVec2(sidebarOrigin.x+S(17),sidebarOrigin.y+navigationPosition.value+S(28)),Color(accent),S(1.5f));
     for(int i=0;i<5;++i) {
         ImGui::SetCursorPos(ImVec2(S(14),S(54.0f+static_cast<float>(i)*42.0f)));ImGui::PushID(i);
         const auto pos=ImGui::GetCursorScreenPos();const bool selected=page==i;
@@ -701,6 +728,29 @@ void Sidebar(float width,float height,Action& action) {
     if(Button("v" HLLCALC_VERSION_STRING,ImVec2(footerWidth,S(26)),false,"sidebar-version")){hotkey::CancelCapture();page=4;distanceActive=false;}
     RecordPoint(30);ImGui::PopStyleColor();ImGui::PopFont();
     ImGui::EndChild();ImGui::PopStyleVar(2);
+}
+// Floating status pill, bottom-centered over the page area. It fades/slides in
+// and out instead of pushing page content, so cards never reflow.
+void StatusToast(float side,float width,float height) {
+    const double now=ImGui::GetTime(),remaining=statusUntil-now;
+    if(remaining<=0||statusText.empty())return;
+    const double shown=3.0-remaining;
+    float t=1.0f;
+    if(MotionEnabled())t=std::min(motion::EaseOutCubic(static_cast<float>(shown/0.2)),motion::EaseOutCubic(static_cast<float>(remaining/0.25)));
+    const auto message=i18n::Translate(statusText);
+    Font(14);
+    const auto size=ImGui::CalcTextSize(message.c_str());
+    const ImVec2 pad(S(16),S(9));
+    const float w=size.x+pad.x*2+S(14),h=size.y+pad.y*2;
+    const float cx=side+(width-side)*0.5f,y=height-S(24)-h+S(10)*(1.0f-t);
+    const ImVec2 a(cx-w*0.5f,y),b(cx+w*0.5f,y+h);
+    auto* draw=ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(ImVec2(a.x,a.y+S(3)),ImVec2(b.x,b.y+S(3)),Color(ImVec4(0,0,0,0.35f*t)),h*0.5f);
+    draw->AddRectFilled(a,b,Color(ImVec4(0.11f,0.13f,0.12f,0.97f*t)),h*0.5f);
+    draw->AddRect(a,b,Color(ImVec4(success.x,success.y,success.z,0.35f*t)),h*0.5f,0,S(1));
+    draw->AddCircleFilled(ImVec2(a.x+pad.x+S(3),a.y+h*0.5f),S(3),Color(ImVec4(success.x,success.y,success.z,t)));
+    draw->AddText(ImVec2(a.x+pad.x+S(14),a.y+pad.y),Color(ImVec4(text.x,text.y,text.z,t)),message.c_str());
+    ImGui::PopFont();
 }
 void WindowButtons(float width,Action& action) {
     auto button=[&](const char* id,bool close){
@@ -783,20 +833,23 @@ Action Frame() {
     ImGui::SetCursorPos(ImVec2(S(22),S(14)));Font(18);ImGui::TextUnformatted("HLL CALC");ImGui::PopFont();
     if(width>side+S(300)){ImGui::SetCursorPos(ImVec2(side+S(24),S(17)));Font(14);Small("TACTICAL UTILITY  /  原生桌面工具");ImGui::PopFont();}
     WindowButtons(width,action);Sidebar(side,height,action);
-    ImGui::SetCursorPos(ImVec2(side,S(48)));
     if(page!=transitionPage){transitionPage=page;pageTransitionStarted=ImGui::GetTime();}
-    const float progress=MotionEnabled()?std::clamp(static_cast<float>((ImGui::GetTime()-pageTransitionStarted)/0.16),0.0f,1.0f):1.0f;
-    const float eased=motion::SmootherStep(progress);
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*(0.84f+0.16f*eased));
+    const float progress=MotionEnabled()?std::clamp(static_cast<float>((ImGui::GetTime()-pageTransitionStarted)/0.22),0.0f,1.0f):1.0f;
+    const float eased=motion::EaseOutCubic(progress);
+    // New page rises a few pixels while fading in; settles exactly at rest.
+    const float rise=S(8)*(1.0f-eased);
+    ImGui::SetCursorPos(ImVec2(side,S(48)+rise));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*(0.6f+0.4f*eased));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(S(16),S(16)));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,0);
-    ImGui::BeginChild("page-content",ImVec2(std::max(S(50),width-side),std::max(S(50),height-S(48))),
+    ImGui::BeginChild("page-content",ImVec2(std::max(S(50),width-side),std::max(S(50),height-S(48)-rise)),
         ImGuiChildFlags_AlwaysUseWindowPadding|ImGuiChildFlags_NavFlattened,
         ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoNavFocus);
     ImGui::PopStyleVar(); // Cards use their own rounding, not the structural container's.
     if(focusDistance&&page==0)ImGui::SetScrollY(0);
     if(page==0)Calculator(action);else if(page==1)CrosshairPage();else if(page==2)HelpPage();else if(page==3)HotkeyPage();else SettingsPage();
-    if(ImGui::GetTime()<statusUntil){Space(6);ImGui::TextColored(success,"%s",i18n::Translate(statusText).c_str());}
-    ImGui::EndChild();ImGui::PopStyleVar(2);ImGui::End();ImGui::PopStyleVar();return action;
+    ImGui::EndChild();ImGui::PopStyleVar(2);
+    StatusToast(side,width,height);
+    ImGui::End();ImGui::PopStyleVar();return action;
 }
 }
