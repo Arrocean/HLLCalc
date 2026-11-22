@@ -75,7 +75,11 @@ add_library(hllcalc_overlay STATIC src/crosshair/crosshair.cpp)
 hllcalc_defaults(hllcalc_overlay)
 target_link_libraries(hllcalc_overlay PUBLIC user32 gdi32 comdlg32 hllcalc_i18n)
 
-add_executable(HLLCalc WIN32 src/app/main.cpp src/app/ui.cpp "${PROJECT_BINARY_DIR}/generated/app.rc")
+add_executable(HLLCalc WIN32
+    src/app/main.cpp src/app/ui.cpp
+    src/app/ui/common.cpp src/app/ui/widgets.cpp src/app/ui/shell.cpp
+    src/app/ui/calculator_page.cpp src/app/ui/crosshair_page.cpp src/app/ui/settings_pages.cpp
+    "${PROJECT_BINARY_DIR}/generated/app.rc")
 hllcalc_defaults(HLLCalc)
 target_compile_definitions(HLLCalc PRIVATE UNICODE _UNICODE)
 target_link_libraries(HLLCalc PRIVATE imgui hllcalc_sharecode hllcalc_hotkey hllcalc_overlay hllcalc_i18n hllcalc_updater shell32 ole32 uuid)

@@ -115,7 +115,8 @@ ctest --test-dir build/cmake -C Release --output-on-failure
 ## 目录与修改边界
 
 ```text
-src/app/           主窗口、渲染循环、界面
+src/app/           主窗口、渲染循环；ui.cpp 为界面对外接口
+src/app/ui/        界面实现：共享状态/控件/外壳/各页面
 src/ballistics/    参数与计算
 src/crosshair/     独立透明叠加层及配置
 src/input/         全局快捷键
